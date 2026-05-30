@@ -25,6 +25,7 @@ import 'package:beldex_browser/src/browser/pages/developers/main.dart';
 import 'package:beldex_browser/src/browser/pages/download_page.dart';
 import 'package:beldex_browser/src/browser/pages/reading_mode/reader_provider.dart';
 import 'package:beldex_browser/src/browser/pages/reading_mode/reader_screen.dart';
+import 'package:beldex_browser/src/browser/pages/search_engine/add_searchengine_provider.dart';
 import 'package:beldex_browser/src/browser/pages/settings/app_language_screen.dart';
 import 'package:beldex_browser/src/browser/pages/settings/main.dart';
 import 'package:beldex_browser/src/browser/pages/settings/search_settings_page.dart';
@@ -65,6 +66,40 @@ import '../project_info_popup.dart';
 import '../webview_tab.dart';
 
 TextEditingController? findOnPageController = TextEditingController();
+
+bool checkSearchEngineInUrl(
+  List<SearchEngineModel> firstList,
+  List<SearchEngineModel> secondList,
+  WebUri givenUrl,
+) {
+  final urlString = givenUrl.toString().toLowerCase();
+
+  // // Check only HTTPS urls
+  // if (!urlString.startsWith('https://')) {
+  //   return false;
+  // }
+
+  // Check first list
+  for (final engine in firstList) {
+    final host = Uri.parse(engine.url).host.toLowerCase();
+
+    if (urlString.contains(host)) {
+      return true;
+    }
+  }
+
+  // Check second list
+  for (final engine in secondList) {
+    final host = Uri.parse(engine.url).host.toLowerCase();
+
+    if (urlString.contains(host)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 
 class WebViewTabAppBar extends StatefulWidget {
   final void Function()? showFindOnPage;
@@ -155,16 +190,54 @@ class WebViewTabAppBarState extends State<WebViewTabAppBar>
     final browserModel = Provider.of<BrowserModel>(context);
     final themeProvider = Provider.of<DarkThemeProvider>(context);
     final theme = Theme.of(context);
-    return Selector<WebViewModel, WebUri?>(
-        selector: (context, webViewModel) => webViewModel.url,
-        builder: (context, url, child) {
-          if (url == null) {
-            print('this search controller is calling');
-            _searchController?.text = "";
-          }
-          if (url != null && _focusNode != null && !_focusNode!.hasFocus) {
-            _searchController?.text = url.toString();
-          }
+     final addEngineProvider =
+        Provider.of<AddSearchEngineProvider>(context, listen: true);
+
+    final selectedSessionEngines =
+        addEngineProvider.selectedSessionEngines;
+    return Selector<WebViewModel, WebViewModel>(
+        selector: (context, webViewModel) => webViewModel,
+        builder: (context, webViewModel, child) {
+          // if (url == null) {
+          //   print('this search controller is calling');
+          //   _searchController?.text = "";
+          // }
+final domains = browserModel.domainList;
+
+for (var item in domains) {
+  print("RESOLVER DOMAINS ${item['domain']}");
+  print("RESOLVER DOMAINS value ${item['resolvedValue']}");
+  print("RESOLVER DOMAINS REDIRECTS ${item['redirectValue']}");
+  print("RESOLVER DOMAINS TYPE ${item['type']}");
+}
+
+
+
+final displayText =
+      webViewModel.url?.toString() ??
+      "";
+      final host = webViewModel.url?.host ?? '';
+
+  if (_focusNode != null && !_focusNode!.hasFocus) {
+    // if(isIpAddress(webViewModel.url.toString())){
+    //         _searchController?.text = webViewModel.getDomainFromIp(host) ?? ''; //webViewModel.resolveData; //'metaverse';
+    //       }else
+    final currentUrl = webViewModel.url?.toString() ?? "";
+
+if(currentUrl.isNotEmpty && !(currentUrl.toString().startsWith('https://') && checkSearchEngineInUrl(SearchEngines, selectedSessionEngines, webViewModel.url!))){
+  _searchController?.text =
+    currentUrl.isEmpty
+        ? ""
+        : browserModel.getDisplayUrl(currentUrl);
+
+}else{
+    _searchController?.text = currentUrl;
+}
+
+  // _searchController?.text = webViewModel.getDisplayUrl(webViewModel.url.toString());
+    //_searchController?.text = displayText;
+   print('Return the IP URL 1 $currentUrl -- ${_searchController?.text}');
+ }
 
           return browserModel.isFindingOnPage
                   ? findOnPageAppBar(themeProvider,theme)
@@ -584,7 +657,11 @@ class WebViewTabAppBarState extends State<WebViewTabAppBar>
                                     image = themeProvider.darkTheme
                                            ? 'assets/images/Web Archieves.svg'
                                            : 'assets/images/web_arc-black.svg';
-                                  } else {
+                                  } else if(isSecure && browserModel.isUrlInDomainList(webViewModel.url.toString())){
+                                    image = themeProvider.darkTheme
+                                      ? 'assets/images/http.svg'
+                                      : 'assets/images/http_white_theme.svg';
+                                  }else {
                                     image = themeProvider.darkTheme
                                         ? 'assets/images/https.svg'
                                         : 'assets/images/https_white_theme.svg';
@@ -2484,9 +2561,9 @@ Future<Map<String, dynamic>?> extractReadableContent(
                                                         overflow: TextOverflow
                                                             .ellipsis),
                                                     TextWidget(
-                                                     text: favorite.url
+                                                     text:  browserModel.getDisplayUrl(favorite.url
                                                               ?.toString() ??
-                                                          "",
+                                                          ""),
                                                       maxLines: 1,
                                                       overflow:
                                                           TextOverflow.ellipsis,
@@ -2671,7 +2748,7 @@ Future<Map<String, dynamic>?> extractReadableContent(
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                             TextWidget(
-                             text: url?.toString() ?? "",
+                             text:browserModel.getDisplayUrl(url?.toString() ?? ""),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -2761,10 +2838,23 @@ Future<Map<String, dynamic>?> extractReadableContent(
 
   void share() {
     var browserModel = Provider.of<BrowserModel>(context, listen: false);
+
+        final addEngineProvider =
+        Provider.of<AddSearchEngineProvider>(context, listen: false);
+
+    final selectedSessionEngines =
+        addEngineProvider.selectedSessionEngines;
     var webViewModel = browserModel.getCurrentTab()?.webViewModel;
+
     var url = webViewModel?.url;
     if (url != null) {
-      Share.share(url.toString(), subject: webViewModel?.title);
+      if(url.toString().isNotEmpty && !(url.toString().startsWith('https://') && checkSearchEngineInUrl(SearchEngines, selectedSessionEngines, url))){
+
+      Share.share(browserModel.getDisplayUrl(url.toString()), subject: webViewModel?.title);
+      }else{
+               Share.share(url.toString(), subject: webViewModel?.title);
+      }
+      //Share.share(url.toString(), subject: webViewModel?.title);
     }
   }
 

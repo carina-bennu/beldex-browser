@@ -5,8 +5,11 @@ import 'package:beldex_browser/ad_blocker_filter.dart';
 import 'package:beldex_browser/l10n/generated/app_localizations.dart';
 import 'package:beldex_browser/locale_provider.dart';
 import 'package:beldex_browser/main.dart';
+//import 'package:beldex_browser/src/browser/app_bar/webview_tab_app_bar.dart';
 import 'package:beldex_browser/src/browser/empty_tab.dart';
+import 'package:beldex_browser/src/browser/models/search_engine_model.dart';
 import 'package:beldex_browser/src/browser/models/webview_model.dart';
+import 'package:beldex_browser/src/browser/pages/search_engine/add_searchengine_provider.dart';
 import 'package:beldex_browser/src/browser/util.dart';
 import 'package:beldex_browser/src/node_dropdown_list_page.dart';
 import 'package:beldex_browser/src/providers.dart';
@@ -234,6 +237,55 @@ bool _isValidUrl(String url) {
     return false; //url.startsWith('http:') || url.startsWith('https') || url == 'about:blank';
   }
 
+
+
+
+
+
+
+
+bool checkSearchEngineInUrl(
+  List<SearchEngineModel> firstList,
+  List<SearchEngineModel> secondList,
+  WebUri givenUrl,
+) {
+  final urlString = givenUrl.toString().toLowerCase();
+
+  // // Check only HTTPS urls
+  // if (!urlString.startsWith('https://')) {
+  //   return false;
+  // }
+
+  // Check first list
+  for (final engine in firstList) {
+    final host = Uri.parse(engine.url).host.toLowerCase();
+
+    if (urlString.contains(host)) {
+      return true;
+    }
+  }
+
+  // Check second list
+  for (final engine in secondList) {
+    final host = Uri.parse(engine.url).host.toLowerCase();
+
+    if (urlString.contains(host)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+
+
+
+
+
+
+
+
   InAppWebView _buildWebView(BuildContext conxt) {
     var browserModel = Provider.of<BrowserModel>(context, listen: true);
     var settings = browserModel.getSettings();
@@ -245,6 +297,11 @@ bool _isValidUrl(String url) {
     final ttsProvider = Provider.of<TtsProvider>(context);
   final loc= AppLocalizations.of(context)!;
   final appLocaleProvider = Provider.of<LocaleProvider>(context);
+   final addEngineProvider =
+        Provider.of<AddSearchEngineProvider>(context, listen: true);
+
+    final selectedSessionEngines =
+        addEngineProvider.selectedSessionEngines;
     //final DownloadController _downloadCon = Get.put(DownloadController());
     final downloadProvider =
         Provider.of<DownloadProvider>(context, listen: false);
@@ -348,6 +405,17 @@ bool _isValidUrl(String url) {
       onLoadStart: (controller, url) async {
         widget.webViewModel.isSecure = Util.urlIsSecure(url!);
         widget.webViewModel.url = url;
+
+    print('RESOLVE IN WEB3 in start load ${browserModel.isWeb3Domain} --- ${url}');
+
+if(browserModel.isWeb3Domain == true && !(url.toString().startsWith('https://') && checkSearchEngineInUrl(SearchEngines, selectedSessionEngines, url))){
+   // var redirect = await controller.getUrl();
+    print('RESOLVE IN WEB3 $url');
+    browserModel.updateRedirectValue(url.toString());
+  }
+
+
+
         widget.webViewModel.loaded = false;
         widget.webViewModel.setLoadedResources([]);
         widget.webViewModel.setJavaScriptConsoleResults([]);
@@ -357,6 +425,7 @@ bool _isValidUrl(String url) {
         } else if (widget.webViewModel.needsToCompleteInitialLoad) {
           controller.stopLoading();
         }
+       browserModel.setIsWeb3Domain(false); 
       },
       onLoadStop: (controller, url) async {
         try{
@@ -369,6 +438,7 @@ bool _isValidUrl(String url) {
           controller.evaluateJavascript(source: js);
           controller.zoomOut();
         }
+       // browserModel.setIsWeb3Domain(false);
          
         widget.webViewModel.url = url;
         widget.webViewModel.favicon = null;
@@ -943,7 +1013,7 @@ line-height:27px;
         <div class="content">
            ${await InAppWebViewController.tRexRunnerHtml}
            <h1>Website not available</h1>
-      <p>Could not load web pages at <strong>$errorUrl</strong> because:</p>
+      <p>Could not load web pages at <strong>${browserModel.getDisplayUrl(errorUrl.toString())}</strong> because:</p>
       <p>${error.description}</p>
         </div></div>
         <div class="footer" id="footer">

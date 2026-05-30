@@ -9,6 +9,8 @@ import 'package:beldex_browser/src/browser/models/favorite_model.dart';
 import 'package:beldex_browser/src/browser/models/web_archive_model.dart';
 import 'package:beldex_browser/src/browser/models/webview_model.dart';
 import 'package:beldex_browser/src/browser/webview_tab.dart';
+import 'package:beldex_browser/src/web2_domain_list.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -180,7 +182,115 @@ void updateIconWhenNotSerchEngine() async {
   }
 
 
+////// FOR WEB3 DOMAIN /////////
 
+final List<Map<String, dynamic>> _domainList = [];
+
+  List<Map<String, dynamic>> get domainList => _domainList;
+
+  bool _isWeb3Domain = false;
+
+  bool get isWeb3Domain => _isWeb3Domain;
+
+ void setIsWeb3Domain(bool value){
+    _isWeb3Domain = value;
+    notifyListeners();
+  }
+
+  void addDomain({
+    required String domain,
+    required String resolvedValue,
+    required String redirectValue,
+    required String type,
+  }) {
+    _domainList.add({
+      "domain": domain,
+      "resolvedValue": resolvedValue,
+      "redirectValue": redirectValue,
+      "type": type,
+    });
+
+    notifyListeners();
+  }
+
+
+
+
+void updateRedirectValue(String newRedirectValue) {
+  if (_domainList.isEmpty) return;
+
+  final lastItem = _domainList.last;
+  if (lastItem.containsKey("redirectValue")) {
+    lastItem["redirectValue"] = newRedirectValue;
+    notifyListeners();
+  }
+}
+
+
+
+
+
+
+  void clearDomains() {
+    _domainList.clear();
+    notifyListeners();
+  }
+
+String getDisplayUrl(String currentUrl) {
+  for (final item in _domainList) {
+    final resolvedValue = item["resolvedValue"]?.toString() ?? "";
+    final redirectValue = item["redirectValue"]?.toString() ?? "";
+    final domain = item["domain"]?.toString() ?? "";
+
+    // Normalize values
+    final normalizedCurrent = currentUrl.toLowerCase();
+    final normalizedResolved = resolvedValue.toLowerCase();
+    final normalizedRedirect = redirectValue.toLowerCase();
+
+    // ✅ Case 1: match resolvedValue (IP)
+    if (normalizedCurrent.contains(normalizedResolved)) {
+      return "http://$domain/";
+    }
+
+    if (_isWeb3Domain){
+      return "http://$domain/";
+    }
+
+    // ✅ Case 2: match redirectValue (final URL)
+    if (normalizedCurrent == normalizedRedirect) {
+      return "http://$domain/";
+    }
+  }
+
+  // ❌ No match → return original
+  return currentUrl;
+}
+
+
+bool isUrlInDomainList(String url) {
+  final normalizedUrl = url.toLowerCase().trim();
+
+  for (final item in _domainList) {
+    final resolvedValue = item["resolvedValue"]?.toString().toLowerCase() ?? "";
+    final redirectValue = item["redirectValue"]?.toString().toLowerCase() ?? "";
+
+    // ✅ Match with resolvedValue (contains for IP cases)
+    if (resolvedValue.isNotEmpty && normalizedUrl.contains(resolvedValue)) {
+      return true;
+    }
+
+    // ✅ Match with redirectValue (exact match preferred)
+    if (redirectValue.isNotEmpty && normalizedUrl == redirectValue) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+
+///////////////////////////////
 
 
 
@@ -574,8 +684,183 @@ setAdblocker() async {
         //    WebViewTab(webViewModel: WebViewModel(url:WebUri( settings.customUrlHomePage))
         //    )
         // ];
-        addTab(WebViewTab(webViewModel: WebViewModel(url:WebUri( settings.customUrlHomePage))
-           ));
+
+
+String trimmedValue = settings.customUrlHomePage.trim();
+
+String normalizedInput;
+
+try {
+  final uri = Uri.parse(
+    trimmedValue.startsWith("http")
+        ? trimmedValue
+        : "http://$trimmedValue",
+  );
+
+  normalizedInput = uri.host;
+} catch (_) {
+  normalizedInput = trimmedValue
+      .replaceFirst(RegExp(r'^https?:\/\/'), '')
+      .split("/")
+      .first;
+}
+
+String input = normalizedInput.toLowerCase();
+
+bool isHttpUrl =
+    trimmedValue.startsWith("http://") ||
+    trimmedValue.startsWith("https://");
+
+bool isFullResolverUrl = input.contains("/resolver/fns/");
+
+// plain text check
+bool isPlainText = !input.contains(".");
+
+bool isWeb2Domain = Web2DomainList().isWeb2Domain(input);
+
+print(
+    'RESOLVE CHECK -> input:$input isHttp:$isHttpUrl web2:$isWeb2Domain plain:$isPlainText');
+
+/// WEB 3 CHECK
+bool isPotentialWeb3Domain =
+    input.contains(".") &&
+    !input.contains(" ");
+
+bool shouldResolveWeb3 =
+    !isPlainText &&
+    !isWeb2Domain &&
+    (isHttpUrl || isPotentialWeb3Domain || isFullResolverUrl);
+
+
+
+if (shouldResolveWeb3) {
+  try {
+    final apiUrl = isFullResolverUrl
+        ? trimmedValue
+        : "https://apis.freename.io/api/v1/resolver/FNS/$input";
+
+    print("RESOLVE API URL -> $apiUrl");
+
+    final res = await Dio().get(apiUrl);
+
+    final records = res.data?["data"]?["records"];
+
+    if (records != null && records.isNotEmpty) {
+      String resolvedValue;
+      String resolvedType;
+
+      final aRecord = records.firstWhere(
+        (r) =>
+            r["type"]?.toString().trim().toUpperCase() == "A",
+        orElse: () => null,
+      );
+
+      if (aRecord != null) {
+        resolvedValue = aRecord["value"];
+        resolvedType = "A";
+      } else {
+        final first = records.first;
+        resolvedValue = first["value"];
+        resolvedType = first["type"]?.toString() ?? "UNKNOWN";
+      }
+
+      final domainName =
+          res.data?["data"]?["asciiName"] ?? input;
+
+      String finalUrl = resolvedValue.startsWith("http")
+          ? resolvedValue
+          : "http://$resolvedValue";
+
+      /// OPEN RESOLVED URL
+        print('Browser model calling -1 $finalUrl');
+
+
+      addTab(
+        WebViewTab(
+          webViewModel: WebViewModel(
+            url: WebUri(finalUrl),
+          ),
+        ),
+      );
+print('Browser model calling -2 $finalUrl');
+
+      /// STORE WEB3 DOMAIN INFO
+      setIsWeb3Domain(true);
+
+      print('RESOLVE setIsWeb3Domain $isWeb3Domain');
+
+     // final value =
+        //  await _currentWebViewModel.webViewController?.getUrl();
+
+      addDomain(
+        domain: domainName,
+        resolvedValue: finalUrl,
+        type: resolvedType,
+        redirectValue: finalUrl
+            //value?.toString() ??
+               // _currentWebViewModel.url.toString(),
+      );
+
+      print("WEB3 DOMAIN STORED -> $domainName");
+    } else {
+      /// no records found
+       print('Browser model calling 0 $trimmedValue');
+
+      addTab(
+        WebViewTab(
+          webViewModel: WebViewModel(
+            url: WebUri(trimmedValue),
+          ),
+        ),
+      );
+    }
+  } catch (e) {
+    print("Resolver failed: $e");
+  print('Browser model calling 1 $trimmedValue');
+
+    /// fallback
+    addTab(
+      WebViewTab(
+        webViewModel: WebViewModel(
+          url: WebUri(trimmedValue),
+        ),
+      ),
+    );
+  }
+} else {
+  /// NORMAL WEB2 URL
+  print('Browser model calling 2 $trimmedValue');
+  addTab(
+    WebViewTab(
+      webViewModel: WebViewModel(
+        url: WebUri(trimmedValue),
+      ),
+    ),
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      //  addTab(WebViewTab(webViewModel: WebViewModel(url:WebUri( settings.customUrlHomePage))    ));
         // addTabs(webViewTabs);
        }
         //addTabs(webViewTabs);
