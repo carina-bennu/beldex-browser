@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  analyze-and-test:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test --coverage
+
+  android:
+    name: Android Build
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle/**','android/**/build.gradle','android/gradle.properties') }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build APK (debug)
+        run: flutter build apk --debug
+
+      - name: Try building App Bundle (release)
+        run: |
+          set -e
+          flutter build appbundle --release || true
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/bundle/release/*.aab
+
+  deploy:
+    name: Deploy APK to Server
+    runs-on: ubuntu-latest
+    needs: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-artifacts
+          path: android-artifacts
+
+      - name: List build files
+        run: |
+          echo "Build files:"
+          find android-artifacts -type f
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Create deployment directory
+        run: |
+          ssh -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}'"
+
+      - name: Copy APK to Server
+        run: |
+          find android-artifacts -name "*.apk" -print
+          scp -P "${{ secrets.SERVER_PORT }}" android-artifacts/**/*.apk "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.DEPLOY_PATH }}/"
