@@ -199,3 +199,4 @@ jobs:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           ssh             -o StrictHostKeyChecking=yes             -p "$SERVER_PORT"             "$SERVER_USER@$SERVER_HOST"             "ls -lh '$DEPLOY_PATH'"
+
